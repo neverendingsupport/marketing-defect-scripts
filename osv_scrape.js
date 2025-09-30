@@ -53,11 +53,6 @@ function isVulnerableAtOrBelow(vuln, targetVersion) {
         return false;
       }
 
-      // target must be <= fixed (if fixed exists)
-      if (fixed && compareSemver(targetVersion, fixed) > 0) {
-        return false;
-      }
-
       return true;
     })
   );
@@ -152,13 +147,13 @@ async function osvRequest(pkg, attempt = 1) {
 
 function extractFixes(v) {
   const fixes = new Set();
-  (v.affected || []).forEach((a) =>
-    (a.ranges || []).forEach((r) =>
+  (v.affected || []).forEach((a) => {
+    (a.ranges || []).forEach((r) => {
       (r.events || []).forEach((e) => {
         if (e.fixed) fixes.add(e.fixed);
-      })
-    )
-  );
+      });
+    });
+  });
   return [...fixes];
 }
 
@@ -170,7 +165,6 @@ async function worker(queue) {
     const vulns = await osvRequest(pkg);
 
     if (!vulns.length) {
-      console.log("No vulns for ", pkg.component);
       continue;
     }
 
@@ -181,7 +175,11 @@ async function worker(queue) {
 
     let remediatedCount = 0;
     for (const v of relevantVulns) {
-      const fixes = extractFixes(v);
+      let fixes = extractFixes(v);
+
+      // Only keep fixes <= forkPoint
+      fixes = fixes.filter((f) => compareSemver(f, pkg.forkPoint) <= 0);
+
       if (fixes.length > 0) remediatedCount++;
 
       if (!allVulns.has(v.id)) {
@@ -211,7 +209,7 @@ async function worker(queue) {
 // -------- Main --------
 (async () => {
   // Read packages from local file
-  const packagesPath = path.resolve("./componentsWithForkPoints.json");
+  const packagesPath = path.resolve("./componentsWithForkPoints2.json");
   let packages;
   try {
     const fileData = await fs.readFile(packagesPath, "utf-8");
@@ -228,6 +226,11 @@ async function worker(queue) {
 
   const vulnList = [...allVulns.values()];
   await fs.writeFile("osv-results.json", JSON.stringify(vulnList, null, 2));
+
+  await fs.writeFile(
+    "package-counts.json",
+    JSON.stringify(Array.from(perPackageCounts))
+  );
 
   console.log("\nRemediated vulnerabilities per component:");
   for (const [comp, count] of perPackageCounts) {
